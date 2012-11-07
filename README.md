@@ -1,7 +1,7 @@
 jquery.scrollable-pagination.js
 ===============================
 
-Basic infinite scroll jQuery plugin with only-next pagination, written in coffee but available in JS
+Basic infinite scroll jQuery plugin with only-next pagination, written in coffee and available in JS.
 
 Usage
 =====
@@ -22,6 +22,8 @@ Then, initialize the plugin from javascript.
 $('#my-list-container').scrollablePagination(options)
 ```
 
+The plugins doesn't care about what contains the returned HTML, while it's HTML markup.
+
 Options
 =======
 
@@ -33,6 +35,9 @@ The following options are available :
 
 * `afterLoaded` : *(function)* Callback to be called when the next markup has been loaded and appended to the container. It is passed the received markup jQuery object.
   > e.g. `afterLoaded: function($markup) { $markup.addClass('new'); }`
+
+
+Note that the javascript passed options will always override data-attribute defined ones.
 
 Licence
 =======
