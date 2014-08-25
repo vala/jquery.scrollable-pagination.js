@@ -1,45 +1,77 @@
-class ScrollablePagination
-  constructor: (@container, options = {}) ->
+ScrollablePagination = {}
+
+class ScrollablePagination.Container
+  constructor: (@$el, options = {}) ->
     @initialize(options)
 
   initialize: (options = {}) ->
+    @originalOptions = $.extend({}, options)
     # Page starts at 1 as a default
-    @page = options.start_page || 1
-    # Fetch URL can be passed in options or in @container's fetch-url data attr.
-    @fetch_url = options.fetch_url || @container.data('fetch-url')
+    options.startPage ?= @$el.data('start-page') or 1
+    # Fetch URL can be passed in options or in @$el's fetch-url data attr.
+    @fetchUrl = options.fetchUrl or @$el.data('fetch-url')
 
+    new ScrollablePagination.NextPageHandler(@$el, this, options)
+    new ScrollablePagination.PreviousPageHandler(@$el, this, options)
+
+  loadPage: (page, callback) ->
+    $.get(
+      @pageUrl(page)
+      (resp) => callback($.trim(resp))
+      'html'
+    )
+
+  pageUrl: (page) ->
+    if @fetchUrl.match /:page/
+      @fetchUrl.replace /:page/, page
+    else
+      url = @fetchUrl
+      url += if url.match /\?/ then '&' else '?'
+      url += "page=#{ page }"
+
+  # Reset alias for re-initialization of the plugin state
+  reset: (options) ->
+    @initialize(options || @originalOptions)
+
+
+class ScrollablePagination.NextPageHandler
+  _loadingHintTemplate: (options) -> """
+    <div class="scrollable-pagination-loader">
+      #{ options.loadingText }
+    </div>
+  """
+
+  constructor: (@$el, @container, options) ->
+    @page = options.startPage
     # Set scrollable container which we will be listening scroll on
-    @scrollable_container = switch
-      when options.scrollable_container == null then @container
-      when options.scrollable_container then $(options.scrollable_container)
+    @scrollableContainer = switch
+      when options.scrollableContainer is null then @$el
+      when options.scrollableContainer then $(options.scrollableContainer)
       else $(window)
-
-    # Callback when next page added to DOM
-    @afterLoaded = options.afterLoaded
-
-    # Start loading when scroll at 200px of scrollable_container's end
-    @scroll_offset = 200
+    # Start loading when scroll at 200px of scrollableContainer's end
+    @scrollOffset = options.scrollOffset || 200
     # If we have no more content to read
     @done = false
-    @last_scroll_handling_call = +(new Date())
+    @lastScrollHandlingCall = +(new Date())
     # Set loading state to false
     @loading = false
-    # Bin all events
-    @bindAll()
+    @loadingText = options.loadingText || 'Loading more ...'
+    @loadingHintTemplate = options.loadingHintTemplate || @_loadingHintTemplate(
+      loadingText: loadingText
+    )
 
-  bindAll: ->
-    @scrollable_container.on 'scroll', => @handleScroll()
+    @scrollableContainer.on 'scroll', => @handleScroll()
 
   handleScroll: ->
     return if @done
 
-    # Don't handle scroll to often ! Every 500ms minimum
+    # Don't handle scroll to often ! Every 200ms minimum
     time = +(new Date())
-    return @resetScrollTimer(time) if (time - @last_scroll_handling_call) < 200 || @done
+    return @resetScrollTimer(time) if (time - @lastScrollHandlingCall) < 200 || @done
 
-    @last_scroll_handling_call = time
+    @lastScrollHandlingCall = time
 
-    top = @scrollable_container.scrollTop()
+    top = @scrollableContainer.scrollTop()
     threshold = @loadThreshold()
     # If scroll position is sufficient and we're not loading yet
     if top > threshold && !@loading
@@ -47,55 +79,80 @@ class ScrollablePagination
       @loadNextDataSet()
 
   resetScrollTimer: (now) ->
-    clearTimeout(@scroll_timer) if @scroll_timer
-    @scroll_timer = setTimeout((=> @handleScroll()), 200)
+    clearTimeout(@scrollTimer) if @scrollTimer
+    @scrollTimer = setTimeout((=> @handleScroll()), 200)
 
   # Get current scroll threshold at which we should start loading next page
   loadThreshold: ->
-    (@container.innerHeight() + @container.offset().top) -
-      (@scrollable_container.innerHeight() + @scroll_offset)
+    (@$el.innerHeight() + @$el.offset().top) -
+      (@scrollableContainer.innerHeight() + @scrollOffset)
 
   loadNextDataSet: ->
-    @setLoading true
-    # Load page
-    $.get(
-      @pageUrl ++@page
-      (resp) => @nextPageLoaded resp
-      'html'
-    )
+    @setLoadingState()
+    @container.loadPage(++@page, (markup) => @nextPageLoaded(markup))
 
-  nextPageLoaded: (resp) ->
-    @setLoading false
-    if resp
-      $markup = $(resp).appendTo(@container)
-      @afterLoaded($markup) if $.isFunction(@afterLoaded)
-    else
+  nextPageLoaded: (markup) ->
+    @removeLoadingState()
+    return (@done = true) unless markup
+    $markup = $(markup).appendTo(@$el)
+    @$el.trigger("pageloaded", [$markup])
+
+  setLoadingState: ->
+    @loading = true
+    @$el.addClass('loading')
+    $(@loadingHintTemplate).appendTo(@$el)
+
+  removeLoadingState: ->
+    @loading = false
+    @$el.removeClass('loading')
+      .find('.scrollable-pagination-loader').remove()
+
+
+class ScrollablePagination.PreviousPageHandler
+  constructor: (@$el, @container, options) ->
+    @page = options.startPage
+    # If we have no more content to read
+    @done = @page is 1
+    # Set loading state to false
+    @loading = false
+
+    @$previousDataButton = if options.previousDataButton
+      options.previousDataButton
+    else if (target = @$el.data('previous-button') and ($target = $(target)).length))
+      $target
+
+
+    @$previousDataButton.on('click', (e) => @previousDataButtonClicked(e))
+
+  previousDataButtonClicked: (e) ->
+    @loadPrevousDataSet()
+    false
+
+  loadPrevousDataSet: ->
+    return if @done
+    @setLoadingState()
+    @container.loadPage(--@page, (markup) => @previousPageLoaded(markup))
+    if @page is 1
       @done = true
+      @$previousDataButton.remove()
 
-  # Set loading state and reflect it accordingly into DOM
-  setLoading: (@loading) ->
-    if @loading
-      @container.addClass('loading')
-        .append(
-          $('<div/>').addClass('scrollable-pagination-loader')
-            .text('Loading content ...')
-        )
-    else
-      @container.removeClass('loading')
-        .find('.scrollable-pagination-loader').remove()
+  previousPageLoaded: (markup) ->
+    @removeLoadingState()
+    $firstChildren = @$el.children().eq(0)
+    scrollOffset = $firstChildren.offset().top - $(window).scrollTop()
+    $markup = $(markup).prependTo(@$el)
+    $(window).scrollTop($firstChildren.offset().top - scrollOffset)
+    @$el.trigger("pageloaded", [$markup])
 
-  pageUrl: (page) ->
-    if @fetch_url.match /:page/
-      @fetch_url.replace /:page/, page
-    else
-      url = @fetch_url
-      url += if url.match /\?/ then '&' else '?'
-      url += "page=#{ page }"
+  setLoadingState: ->
+    @loading = true
+    @$el.addClass('loading')
+    @$previousDataButton.addClass('loading')
 
-  # Reset alias for re-initialization of the plugin state
-  reset: (options = {}) ->
-    @initialize(options)
-
+  removeLoadingState: ->
+    @loading = false
+    @$el.removeClass('loading')
+    @$previousDataButton.removeClass('loading')
 
 # jQuery plugin access and caching
 do ($ = jQuery) ->
@@ -108,5 +165,11 @@ do ($ = jQuery) ->
     # Create ScrollablePagination item and cache it
     $this.data(
       'scrollable-pagination',
-      new ScrollablePagination($this, options)
+      new ScrollablePagination.Container($this, options)
     )
+
+  # Data api
+  $ ->
+    $("[data-pagination='scrollable']").each (i, element) ->
+      $el = $(element)
+      $el.scrollablePagination(fetchUrl: $el.data("fetch-url"))
